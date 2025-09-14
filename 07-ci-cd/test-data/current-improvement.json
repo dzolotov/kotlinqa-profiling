@@ -1,0 +1,29 @@
+[
+  {
+    "benchmark": "StringBenchmark.stringBuilder",
+    "mode": "avgt",
+    "primaryMetric": {
+      "score": 6617.65,
+      "scoreError": 132.35,
+      "scoreUnit": "ns/op"
+    }
+  },
+  {
+    "benchmark": "StringBenchmark.stringConcatenation",
+    "mode": "avgt",
+    "primaryMetric": {
+      "score": 50409.19,
+      "scoreError": 2520.46,
+      "scoreUnit": "ns/op"
+    }
+  },
+  {
+    "benchmark": "StringBenchmark.stringJoin",
+    "mode": "avgt",
+    "primaryMetric": {
+      "score": 9953.86,
+      "scoreError": 497.69,
+      "scoreUnit": "ns/op"
+    }
+  }
+]

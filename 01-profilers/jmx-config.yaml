@@ -1,0 +1,111 @@
+# JMX Prometheus Java Agent Configuration
+startDelaySeconds: 0
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+whitelistObjectNames:
+  - "java.lang:type=Memory"
+  - "java.lang:type=Memory,name=*"
+  - "java.lang:type=MemoryPool,name=*"
+  - "java.lang:type=GarbageCollector,name=*"
+  - "java.lang:type=Threading"
+  - "java.lang:type=Runtime"
+  - "java.lang:type=OperatingSystem"
+  - "java.lang:type=ClassLoading"
+  - "java.nio:type=BufferPool,name=*"
+
+rules:
+  # JVM Memory
+  - pattern: 'java.lang<type=Memory><>(\w+)Used'
+    name: jvm_memory_used_bytes
+    value: $1
+    help: "Used bytes of a given JVM memory area."
+    type: GAUGE
+    labels:
+      area: "$1"
+
+  - pattern: 'java.lang<type=Memory><>(\w+)Committed'
+    name: jvm_memory_committed_bytes
+    value: $1
+    help: "Committed bytes of a given JVM memory area."
+    type: GAUGE
+    labels:
+      area: "$1"
+
+  - pattern: 'java.lang<type=Memory><>(\w+)Max'
+    name: jvm_memory_max_bytes
+    value: $1
+    help: "Max bytes of a given JVM memory area."
+    type: GAUGE
+    labels:
+      area: "$1"
+
+  # Memory Pools
+  - pattern: 'java.lang<type=MemoryPool, name=(.+)><>Usage<>(.+)'
+    name: jvm_memory_pool_$2_bytes
+    value: $2
+    help: "Memory pool metrics"
+    type: GAUGE
+    labels:
+      pool: "$1"
+
+  # Garbage Collection
+  - pattern: 'java.lang<type=GarbageCollector, name=(.+)><>CollectionCount'
+    name: jvm_gc_collection_count
+    help: "GC collection count"
+    type: COUNTER
+    labels:
+      gc: "$1"
+
+  - pattern: 'java.lang<type=GarbageCollector, name=(.+)><>CollectionTime'
+    name: jvm_gc_collection_time_ms
+    help: "GC collection time in milliseconds"
+    type: COUNTER
+    labels:
+      gc: "$1"
+
+  # Threading
+  - pattern: 'java.lang<type=Threading><>ThreadCount'
+    name: jvm_threads_current
+    help: "Current thread count"
+    type: GAUGE
+
+  - pattern: 'java.lang<type=Threading><>DaemonThreadCount'
+    name: jvm_threads_daemon
+    help: "Daemon thread count"
+    type: GAUGE
+
+  - pattern: 'java.lang<type=Threading><>PeakThreadCount'
+    name: jvm_threads_peak
+    help: "Peak thread count"
+    type: GAUGE
+
+  # Runtime
+  - pattern: 'java.lang<type=Runtime><>Uptime'
+    name: jvm_uptime_milliseconds
+    help: "JVM uptime in milliseconds"
+    type: COUNTER
+
+  # Operating System
+  - pattern: 'java.lang<type=OperatingSystem><>ProcessCpuLoad'
+    name: process_cpu_usage
+    help: "Process CPU usage"
+    type: GAUGE
+
+  - pattern: 'java.lang<type=OperatingSystem><>SystemCpuLoad'
+    name: system_cpu_usage
+    help: "System CPU usage"
+    type: GAUGE
+
+  # Class Loading
+  - pattern: 'java.lang<type=ClassLoading><>LoadedClassCount'
+    name: jvm_classes_loaded
+    help: "Number of loaded classes"
+    type: GAUGE
+
+  - pattern: 'java.lang<type=ClassLoading><>UnloadedClassCount'
+    name: jvm_classes_unloaded
+    help: "Number of unloaded classes"
+    type: COUNTER
+
+  # Catch-all pattern
+  - pattern: ".*"

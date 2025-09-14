@@ -1,0 +1,582 @@
+// Jenkins Pipeline для Performance Testing
+// Файл: Jenkinsfile
+
+pipeline {
+    agent {
+        label 'kotlin-performance' // Используем агенты с необходимой конфигурацией
+    }
+
+    // Настройки pipeline
+    options {
+        // Храним последние 10 сборок
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+
+        // Timeout для всего pipeline (45 минут)
+        timeout(time: 45, unit: 'MINUTES')
+
+        // Отмечаем build как unstable вместо failed при performance regression
+        skipDefaultCheckout false
+
+        // Параллельное выполнение этапов
+        parallelsAlwaysFailFast false
+    }
+
+    // Параметры для настройки
+    parameters {
+        choice(
+            name: 'BENCHMARK_TYPE',
+            choices: ['all', 'jvm-only', 'android-only', 'jmh-only'],
+            description: 'Тип бенчмарков для запуска'
+        )
+
+        booleanParam(
+            name: 'PERFORMANCE_STRICT_MODE',
+            defaultValue: false,
+            description: 'Строгий режим: fail при любом замедлении'
+        )
+
+        string(
+            name: 'PERFORMANCE_THRESHOLD',
+            defaultValue: '120',
+            description: 'Порог производительности в % (120 = 20% замедление)'
+        )
+    }
+
+    // Переменные окружения
+    environment {
+        // Java конфигурация
+        JAVA_HOME = tool('OpenJDK-17')
+        PATH = "${JAVA_HOME}/bin:${env.PATH}"
+
+        // Gradle настройки
+        GRADLE_OPTS = '-Dorg.gradle.daemon=false -Xmx3g -XX:MaxMetaspaceSize=512m'
+        GRADLE_USER_HOME = "${WORKSPACE}/.gradle"
+
+        // Android настройки
+        ANDROID_HOME = '/opt/android-sdk'
+        ANDROID_COMPILE_SDK = '34'
+
+        // Настройки производительности
+        PERFORMANCE_THRESHOLD = "${params.PERFORMANCE_THRESHOLD}"
+
+        // Настройки отчетности
+        REPORTS_DIR = "${WORKSPACE}/performance-reports"
+    }
+
+    stages {
+        stage('Подготовка') {
+            steps {
+                script {
+                    // Информация о build
+                    echo "🚀 Starting Performance Testing Pipeline"
+                    echo "Branch: ${env.BRANCH_NAME}"
+                    echo "Build: ${env.BUILD_NUMBER}"
+                    echo "Parameters: ${params}"
+
+                    // Создаем директории для отчетов
+                    sh '''
+                        mkdir -p ${REPORTS_DIR}
+                        mkdir -p ${REPORTS_DIR}/jvm
+                        mkdir -p ${REPORTS_DIR}/android
+                        mkdir -p ${REPORTS_DIR}/jmh
+                    '''
+                }
+
+                // Checkout с полной историей для сравнения
+                checkout([
+                    $class: 'GitSCM',
+                    branches: scm.branches,
+                    doGenerateSubmoduleConfigurations: false,
+                    extensions: [
+                        [$class: 'CloneOption', depth: 0, noTags: false, reference: '', shallow: false]
+                    ],
+                    submoduleCfg: [],
+                    userRemoteConfigs: scm.userRemoteConfigs
+                ])
+            }
+        }
+
+        stage('Сборка проекта') {
+            steps {
+                script {
+                    echo "🏗️ Building project..."
+                }
+
+                sh '''
+                    chmod +x ./gradlew
+                    ./gradlew clean build -x test --info --stacktrace
+                '''
+            }
+
+            post {
+                always {
+                    // Публикуем результаты тестов сборки
+                    publishTestResults testResultsPattern: 'build/test-results/test/TEST-*.xml'
+                }
+            }
+        }
+
+        stage('Параллельные бенчмарки') {
+            parallel {
+                stage('JVM/JS/Native Бенчмарки') {
+                    when {
+                        anyOf {
+                            expression { params.BENCHMARK_TYPE == 'all' }
+                            expression { params.BENCHMARK_TYPE == 'jvm-only' }
+                        }
+                    }
+
+                    steps {
+                        script {
+                            echo "☕ Running Kotlin Multiplatform benchmarks..."
+                        }
+
+                        sh '''
+                            # JVM бенчмарки
+                            echo "Running JVM benchmarks..."
+                            ./gradlew jvmBenchmark --info || echo "JVM benchmarks failed"
+
+                            # JS бенчмарки (могут быть нестабильными)
+                            echo "Running JS benchmarks..."
+                            ./gradlew jsBenchmark --info || echo "JS benchmarks failed (expected in some environments)"
+
+                            # Native бенчмарки (только на Linux)
+                            if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+                                echo "Running Native benchmarks..."
+                                ./gradlew nativeBenchmark --info || echo "Native benchmarks failed"
+                            else
+                                echo "Skipping Native benchmarks (not Linux)"
+                            fi
+                        '''
+
+                        // Обработка результатов
+                        sh '''
+                            echo "Processing JVM benchmark results..."
+
+                            # Копируем результаты
+                            if [ -d "build/reports/benchmarks" ]; then
+                                cp -r build/reports/benchmarks/* ${REPORTS_DIR}/jvm/ || echo "No JVM results to copy"
+                            fi
+
+                            # Создаем summary
+                            find build/reports/benchmarks -name "*.json" -exec echo "Found benchmark result: {}" \\;
+                        '''
+                    }
+
+                    post {
+                        always {
+                            // Архивируем результаты JVM бенчмарков
+                            archiveArtifacts(
+                                artifacts: 'build/reports/benchmarks/**/*',
+                                allowEmptyArchive: true,
+                                fingerprint: true
+                            )
+                        }
+                    }
+                }
+
+                stage('Android Бенчмарки') {
+                    when {
+                        anyOf {
+                            expression { params.BENCHMARK_TYPE == 'all' }
+                            expression { params.BENCHMARK_TYPE == 'android-only' }
+                        }
+                    }
+
+                    agent {
+                        label 'android-emulator' // Специальные агенты с Android SDK
+                    }
+
+                    steps {
+                        script {
+                            echo "📱 Running Android performance tests..."
+                        }
+
+                        // Сборка Android компонентов
+                        sh '''
+                            echo "Building Android components..."
+                            ./gradlew assembleRelease assembleAndroidTest
+                            ./gradlew assembleBenchmark assembleBenchmarkAndroidTest
+                        '''
+
+                        // Проверка Android окружения
+                        sh '''
+                            echo "Checking Android environment..."
+                            echo "ANDROID_HOME: $ANDROID_HOME"
+
+                            # Проверяем наличие ADB
+                            if command -v adb &> /dev/null; then
+                                adb version
+                                adb devices
+                            else
+                                echo "❌ ADB not found - Android tests may fail"
+                            fi
+                        '''
+
+                        // Запуск Android бенчмарков
+                        sh '''
+                            echo "Running Android benchmarks..."
+
+                            # Настройки для CI окружения
+                            if adb devices | grep -q "device"; then
+                                echo "📱 Android device found - configuring for benchmarks"
+
+                                # Отключаем анимации
+                                adb shell settings put global window_animation_scale 0 || true
+                                adb shell settings put global transition_animation_scale 0 || true
+                                adb shell settings put global animator_duration_scale 0 || true
+
+                                # Запуск микробенчмарков
+                                ./gradlew benchmark:connectedAndroidTest \\
+                                    -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.suppressErrors=EMULATOR,LOW-BATTERY,UNLOCKED \\
+                                    --info || echo "Microbenchmarks completed with warnings"
+
+                                # Запуск макробенчмарков
+                                ./gradlew macrobenchmark:connectedAndroidTest \\
+                                    -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.suppressErrors=EMULATOR,LOW-BATTERY,UNLOCKED \\
+                                    --info || echo "Macrobenchmarks completed with warnings"
+
+                                # Извлечение trace файлов
+                                echo "Extracting benchmark traces..."
+                                mkdir -p ${REPORTS_DIR}/android/traces
+
+                                # Проверяем наличие benchmark данных на устройстве
+                                adb shell ls /sdcard/Android/media/*/additional_test_output/ || echo "No benchmark outputs found on device"
+
+                                # Извлекаем файлы
+                                adb pull /sdcard/Android/media/ ${REPORTS_DIR}/android/traces/ || echo "Could not extract trace files"
+
+                            else
+                                echo "❌ No Android device available - skipping connected tests"
+
+                                # Можем запустить unit тесты или создать mock результаты
+                                echo "Creating placeholder results for offline testing..."
+                                mkdir -p ${REPORTS_DIR}/android
+                                echo "Android benchmarks require connected device" > ${REPORTS_DIR}/android/status.txt
+                            fi
+                        '''
+                    }
+
+                    post {
+                        always {
+                            // Архивируем Android результаты
+                            archiveArtifacts(
+                                artifacts: 'benchmark/build/outputs/**/*,macrobenchmark/build/outputs/**/*',
+                                allowEmptyArchive: true
+                            )
+
+                            // Публикуем Android test результаты
+                            publishTestResults(
+                                testResultsPattern: 'benchmark/build/outputs/**/TEST-*.xml,macrobenchmark/build/outputs/**/TEST-*.xml'
+                            )
+                        }
+                    }
+                }
+
+                stage('JMH Глубокий анализ') {
+                    when {
+                        anyOf {
+                            expression { params.BENCHMARK_TYPE == 'all' }
+                            expression { params.BENCHMARK_TYPE == 'jmh-only' }
+                        }
+                    }
+
+                    steps {
+                        script {
+                            echo "⚡ Running JMH deep performance analysis..."
+                        }
+
+                        // Компиляция JMH
+                        sh '''
+                            echo "Building JMH JAR..."
+                            ./gradlew jmhJar --info
+
+                            # Проверяем создание JAR файла
+                            if [ -f "build/libs/jmh.jar" ]; then
+                                echo "✅ JMH JAR created successfully"
+                                ls -la build/libs/jmh.jar
+                            else
+                                echo "❌ JMH JAR not found!"
+                                exit 1
+                            fi
+                        '''
+
+                        // Запуск JMH бенчмарков
+                        sh '''
+                            echo "Running JMH benchmarks with detailed profiling..."
+
+                            # Создаем детальный конфиг для CI
+                            java -jar build/libs/jmh.jar \\
+                                -wi 3 \\
+                                -i 5 \\
+                                -f 1 \\
+                                -r 1s \\
+                                -w 1s \\
+                                -rf json \\
+                                -rff ${REPORTS_DIR}/jmh/jmh-results.json \\
+                                -v EXTRA
+
+                            echo "✅ JMH benchmarks completed"
+                        '''
+
+                        // Обработка JMH результатов
+                        sh '''
+                            echo "Processing JMH results..."
+
+                            if [ -f "${REPORTS_DIR}/jmh/jmh-results.json" ]; then
+                                # Создание человекочитаемого отчета
+                                python3 << 'PYTHON_SCRIPT'
+import json
+import sys
+import os
+
+try:
+    reports_dir = os.environ['REPORTS_DIR']
+    results_file = f"{reports_dir}/jmh/jmh-results.json"
+
+    with open(results_file, 'r') as f:
+        results = json.load(f)
+
+    # Создаем HTML отчет
+    html_report = f"{reports_dir}/jmh/jmh-report.html"
+    with open(html_report, 'w') as f:
+        f.write("""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>JMH Benchmark Results</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        th, td { padding: 10px; text-align: left; border: 1px solid #ddd; }
+        th { background-color: #f2f2f2; }
+        .score { font-weight: bold; color: #2196F3; }
+        .error { color: #666; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <h1>JMH Benchmark Results</h1>
+    <table>
+        <tr>
+            <th>Benchmark</th>
+            <th>Score</th>
+            <th>Unit</th>
+            <th>Error</th>
+            <th>Mode</th>
+        </tr>
+""")
+
+        print("JMH Results Summary:")
+        print("=" * 60)
+
+        for result in results:
+            benchmark = result['benchmark']
+            score = result['primaryMetric']['score']
+            unit = result['primaryMetric']['scoreUnit']
+            error = result['primaryMetric']['scoreError']
+            mode = result['mode']
+
+            # Console output
+            print(f"{benchmark}:")
+            print(f"  Score: {score:.2f} ± {error:.2f} {unit} ({mode})")
+
+            # HTML table row
+            f.write(f"""
+        <tr>
+            <td>{benchmark}</td>
+            <td class="score">{score:.2f}</td>
+            <td>{unit}</td>
+            <td class="error">± {error:.2f}</td>
+            <td>{mode}</td>
+        </tr>
+""")
+
+        f.write("""
+    </table>
+    <p><small>Generated by Jenkins Performance Pipeline</small></p>
+</body>
+</html>
+""")
+
+    print(f"\\n✅ JMH HTML report created: {html_report}")
+    print(f"Total benchmarks processed: {len(results)}")
+
+except Exception as e:
+    print(f"Error processing JMH results: {e}")
+    sys.exit(1)
+PYTHON_SCRIPT
+                            else
+                                echo "❌ JMH results file not found"
+                                exit 1
+                            fi
+                        '''
+                    }
+
+                    post {
+                        always {
+                            // Архивируем JMH результаты
+                            archiveArtifacts(
+                                artifacts: 'build/libs/jmh.jar,performance-reports/jmh/**/*',
+                                allowEmptyArchive: true
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Анализ производительности') {
+            steps {
+                script {
+                    echo "📊 Analyzing performance results..."
+
+                    // Сравнение с предыдущими результатами
+                    def performanceRegression = false
+                    def warningThreshold = params.PERFORMANCE_THRESHOLD as Integer
+
+                    echo "Performance threshold: ${warningThreshold}%"
+                }
+
+                sh '''
+                    echo "Generating comprehensive performance report..."
+
+                    # Создаем сводный отчет
+                    cat > ${REPORTS_DIR}/performance-summary.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Performance Test Summary - Build ${BUILD_NUMBER}</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .header { background: #f5f5f5; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .success { border-left: 4px solid #4CAF50; }
+        .warning { border-left: 4px solid #FF9800; }
+        .error { border-left: 4px solid #F44336; }
+        ul { list-style-type: none; padding: 0; }
+        li { margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚀 Performance Test Summary</h1>
+        <ul>
+            <li><strong>Build:</strong> ${BUILD_NUMBER}</li>
+            <li><strong>Branch:</strong> ${BRANCH_NAME}</li>
+            <li><strong>Job:</strong> ${JOB_NAME}</li>
+            <li><strong>Date:</strong> $(date)</li>
+        </ul>
+    </div>
+EOF
+
+                    # Проверяем результаты каждого типа тестов
+                    for test_type in jvm android jmh; do
+                        echo "<div class=\"section\">" >> ${REPORTS_DIR}/performance-summary.html
+                        echo "<h2>${test_type^} Benchmarks</h2>" >> ${REPORTS_DIR}/performance-summary.html
+
+                        if [ -d "${REPORTS_DIR}/${test_type}" ] && [ "$(ls -A ${REPORTS_DIR}/${test_type} 2>/dev/null)" ]; then
+                            file_count=$(find ${REPORTS_DIR}/${test_type} -type f | wc -l)
+                            echo "<p class=\"success\">✅ Completed successfully ($file_count files generated)</p>" >> ${REPORTS_DIR}/performance-summary.html
+                        else
+                            echo "<p class=\"warning\">⚠️ No results found or tests skipped</p>" >> ${REPORTS_DIR}/performance-summary.html
+                        fi
+
+                        echo "</div>" >> ${REPORTS_DIR}/performance-summary.html
+                    done
+
+                    # Заключение
+                    cat >> ${REPORTS_DIR}/performance-summary.html << 'EOF'
+
+    <div class="section">
+        <h2>🎯 Next Steps</h2>
+        <ul>
+            <li>Download and analyze detailed benchmark artifacts</li>
+            <li>Compare with baseline performance metrics</li>
+            <li>Investigate any performance regressions</li>
+            <li>Update performance baselines if needed</li>
+        </ul>
+    </div>
+
+    <p><small>Generated automatically by Jenkins Performance Pipeline</small></p>
+</body>
+</html>
+EOF
+
+                    echo "✅ Performance summary report generated"
+                '''
+            }
+
+            post {
+                always {
+                    // Публикуем HTML отчеты
+                    publishHTML([
+                        allowMissing: false,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: "${env.REPORTS_DIR}",
+                        reportFiles: 'performance-summary.html',
+                        reportName: 'Performance Report'
+                    ])
+
+                    // Архивируем все отчеты
+                    archiveArtifacts(
+                        artifacts: 'performance-reports/**/*',
+                        allowEmptyArchive: true,
+                        fingerprint: true
+                    )
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                echo "📝 Pipeline completed - cleaning up..."
+            }
+
+            // Очистка workspace (опционально)
+            cleanWs(
+                deleteDirs: true,
+                notFailBuild: true,
+                patterns: [
+                    [pattern: '.gradle', type: 'INCLUDE'],
+                    [pattern: 'build/tmp', type: 'INCLUDE']
+                ]
+            )
+        }
+
+        success {
+            script {
+                echo "✅ Performance testing completed successfully!"
+
+                // Уведомления при успехе (если настроены)
+                if (env.BRANCH_NAME == 'main') {
+                    // Slack, email или другие уведомления
+                    echo "Performance baseline updated for main branch"
+                }
+            }
+        }
+
+        failure {
+            script {
+                echo "❌ Performance testing failed!"
+
+                // Уведомления о критических проблемах
+                if (env.BRANCH_NAME == 'main') {
+                    echo "CRITICAL: Performance tests failed on main branch"
+                    // Отправка алертов команде
+                }
+            }
+        }
+
+        unstable {
+            script {
+                echo "⚠️ Performance testing completed with warnings"
+                echo "Check for performance regressions in the artifacts"
+            }
+        }
+    }
+}

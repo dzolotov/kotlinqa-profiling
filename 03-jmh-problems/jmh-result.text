@@ -1,0 +1,9 @@
+Benchmark                                          Mode  Cnt    Score     Error  Units
+DeadCodeElimination.correct                        avgt    3    4,479 ±   0,842  ns/op
+DeadCodeElimination.correctBlackhole               avgt    3    4,580 ±   1,158  ns/op
+DeadCodeElimination.correctLoop                    avgt    3   39,741 ±   5,012  ns/op
+DeadCodeElimination.correctStringBuilder           avgt    3  642,067 ± 123,759  ns/op
+DeadCodeElimination.correctStringBuilderBlackhole  avgt    3  668,495 ± 192,182  ns/op
+DeadCodeElimination.wrong                          avgt    3    4,482 ±   2,809  ns/op
+DeadCodeElimination.wrongLoop                      avgt    3    0,291 ±   0,105  ns/op
+DeadCodeElimination.wrongStringBuilder             avgt    3  506,485 ±  29,288  ns/op

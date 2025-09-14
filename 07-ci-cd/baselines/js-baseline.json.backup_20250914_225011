@@ -1,0 +1,37 @@
+{
+  "results": [
+    {
+      "benchmark": "StringBenchmark.stringBuilder",
+      "mode": "avgt",
+      "primaryMetric": {
+        "score": 7352.95,
+        "scoreError": 145.23,
+        "scoreUnit": "ns/op"
+      }
+    },
+    {
+      "benchmark": "StringBenchmark.stringConcatenation",
+      "mode": "avgt",
+      "primaryMetric": {
+        "score": 56220.22,
+        "scoreError": 2834.15,
+        "scoreUnit": "ns/op"
+      }
+    },
+    {
+      "benchmark": "StringBenchmark.stringJoin",
+      "mode": "avgt",
+      "primaryMetric": {
+        "score": 11075.96,
+        "scoreError": 567.82,
+        "scoreUnit": "ns/op"
+      }
+    }
+  ],
+  "baseline_metadata": {
+    "baseline_updated": "2025-09-14T22:49:33.890835",
+    "source_file": "test-data/baseline.json",
+    "improvement_threshold": 5,
+    "updated_by": "baseline-updater.sh"
+  }
+}

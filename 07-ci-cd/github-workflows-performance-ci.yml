@@ -1,0 +1,395 @@
+name: 🚀 Performance CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Еженедельный регрессионный тест производительности (каждое воскресенье в 2:00 UTC)
+    - cron: '0 2 * * 0'
+
+env:
+  # Пороги деградации производительности
+  PERFORMANCE_THRESHOLD: "120%"  # Максимальное замедление 20%
+  ALERT_THRESHOLD: "150%"        # Критическое замедление 50%
+
+  # Конфигурация Android
+  ANDROID_COMPILE_SDK: "34"
+  ANDROID_MIN_SDK: "24"
+  ANDROID_TARGET_SDK: "34"
+
+jobs:
+  # Матрица для тестирования на разных платформах
+  kotlin-multiplatform-benchmarks:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        kotlin-target: [jvm, js, native]
+        exclude:
+          # JS не поддерживается на Windows в нашей конфигурации
+          - os: windows-latest
+            kotlin-target: js
+          # Native компиляция только на соответствующих OS
+          - os: ubuntu-latest
+            kotlin-target: native
+          - os: windows-latest
+            kotlin-target: native
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Полная история для сравнения производительности
+
+      - name: ☕ Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🐘 Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: 🔧 Make gradlew executable
+        run: chmod +x ./gradlew
+        if: runner.os != 'Windows'
+
+      - name: 🏗️ Build project
+        run: ./gradlew build -x test
+
+      - name: 🏃‍♂️ Run ${{ matrix.kotlin-target }} benchmarks
+        run: |
+          case "${{ matrix.kotlin-target }}" in
+            "jvm")
+              ./gradlew jvmBenchmark --info
+              ;;
+            "js")
+              ./gradlew jsBenchmark --info
+              ;;
+            "native")
+              ./gradlew nativeBenchmark --info
+              ;;
+          esac
+
+      - name: 📊 Process benchmark results
+        run: |
+          # Создаем unified формат результатов
+          mkdir -p build/ci-reports/
+          echo "Processing ${{ matrix.kotlin-target }} benchmarks on ${{ matrix.os }}"
+
+          # Копируем результаты в стандартизированную структуру
+          if [ -d "build/reports/benchmarks/" ]; then
+            cp -r build/reports/benchmarks/* build/ci-reports/
+            echo "Benchmark results processed successfully"
+          else
+            echo "No benchmark results found"
+          fi
+
+      - name: 📈 Store benchmark data
+        uses: benchmark-action/github-action-benchmark@v1
+        if: github.ref == 'refs/heads/main'
+        with:
+          tool: 'customSmallerIsBetter'
+          output-file-path: build/ci-reports/${{ matrix.kotlin-target }}.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: ${{ env.PERFORMANCE_THRESHOLD }}
+          comment-on-alert: true
+          fail-on-alert: false
+          benchmark-data-dir-path: "benchmarks/${{ matrix.kotlin-target }}/${{ matrix.os }}"
+
+      - name: 🎯 Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-${{ matrix.kotlin-target }}-${{ matrix.os }}
+          path: build/ci-reports/
+          retention-days: 30
+
+  # Android бенчмарки с эмулятором
+  android-performance-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🔧 Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: 📱 Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 🐘 Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: 🏗️ Build Android app
+        run: |
+          ./gradlew assembleRelease assembleAndroidTest
+          ./gradlew assembleBenchmark assembleBenchmarkAndroidTest
+
+      - name: 📱 Run Android benchmarks
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          target: google_apis
+          arch: x86_64
+          profile: Nexus 6
+          cores: 2
+          ram-size: 4096M
+          heap-size: 512M
+          script: |
+            echo "Running Android Jetpack Benchmarks..."
+
+            # Настройка для CI окружения
+            adb shell settings put global window_animation_scale 0
+            adb shell settings put global transition_animation_scale 0
+            adb shell settings put global animator_duration_scale 0
+
+            # Запуск микробенчмарков
+            ./gradlew benchmark:connectedAndroidTest \
+              -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.suppressErrors=EMULATOR,LOW-BATTERY \
+              --info
+
+            # Запуск макробенчмарков
+            ./gradlew macrobenchmark:connectedAndroidTest \
+              -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.suppressErrors=EMULATOR,LOW-BATTERY \
+              --info
+
+      - name: 📊 Extract benchmark traces
+        if: always()
+        run: |
+          echo "Extracting benchmark artifacts from device..."
+          adb shell ls /sdcard/Android/media/*/additional_test_output/ || echo "No benchmark outputs found"
+
+          # Создаем директорию для результатов
+          mkdir -p build/android-benchmark-results/
+
+          # Извлекаем JSON результаты
+          adb pull /sdcard/Android/media/ build/android-benchmark-results/ || echo "Could not pull media files"
+
+          # Извлекаем trace файлы если они есть
+          adb shell find /sdcard/Android/media/ -name "*.json" -o -name "*.trace" -o -name "*.perfetto-trace" | \
+            while read file; do
+              echo "Found: $file"
+              adb pull "$file" build/android-benchmark-results/ || true
+            done
+
+      - name: 🎯 Upload Android benchmark results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-benchmark-results
+          path: |
+            build/android-benchmark-results/
+            benchmark/build/outputs/androidTest-results/
+            macrobenchmark/build/outputs/androidTest-results/
+          retention-days: 30
+
+  # JMH бенчмарки для детального анализа производительности
+  jmh-deep-analysis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🐘 Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: 🏃‍♂️ Run JMH benchmarks
+        run: |
+          # Компилируем JMH jar
+          ./gradlew jmhJar
+
+          # Запускаем бенчмарки с подробной конфигурацией
+          java -jar build/libs/jmh.jar \
+            -wi 3 \
+            -i 5 \
+            -f 1 \
+            -r 1s \
+            -w 1s \
+            -rf json \
+            -rff build/jmh-results.json \
+            -v EXTRA
+
+      - name: 📊 Process JMH results
+        run: |
+          echo "JMH Results Summary:"
+          if [ -f "build/jmh-results.json" ]; then
+            # Простой парсер результатов JMH
+            python3 -c "
+            import json
+            import sys
+
+            try:
+                with open('build/jmh-results.json', 'r') as f:
+                    data = json.load(f)
+
+                print('\\n📈 JMH Benchmark Results:')
+                print('=' * 50)
+
+                for result in data:
+                    benchmark = result['benchmark']
+                    score = result['primaryMetric']['score']
+                    unit = result['primaryMetric']['scoreUnit']
+                    error = result['primaryMetric']['scoreError']
+
+                    print(f'{benchmark}:')
+                    print(f'  Score: {score:.2f} ± {error:.2f} {unit}')
+                    print(f'  Mode: {result[\"mode\"]}')
+                    print()
+
+            except Exception as e:
+                print(f'Error parsing JMH results: {e}')
+                sys.exit(1)
+            "
+          else
+            echo "❌ No JMH results file found"
+          fi
+
+      - name: 🎯 Upload JMH results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jmh-benchmark-results
+          path: |
+            build/jmh-results.json
+            build/libs/jmh.jar
+          retention-days: 30
+
+  # Сводный отчет и анализ регрессий
+  performance-report:
+    needs: [kotlin-multiplatform-benchmarks, android-performance-tests, jmh-deep-analysis]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: 📥 Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: 📊 Generate performance report
+        run: |
+          echo "# 🚀 Performance Test Report" > performance-report.md
+          echo "" >> performance-report.md
+          echo "**Build**: \`${{ github.sha }}\`" >> performance-report.md
+          echo "**Branch**: \`${{ github.ref_name }}\`" >> performance-report.md
+          echo "**Workflow**: [${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> performance-report.md
+          echo "" >> performance-report.md
+
+          echo "## 📋 Test Summary" >> performance-report.md
+          echo "" >> performance-report.md
+
+          # Подсчитываем артефакты
+          KOTLIN_ARTIFACTS=$(ls artifacts/ | grep "benchmark-" | wc -l)
+          ANDROID_ARTIFACTS=$(ls artifacts/ | grep "android" | wc -l)
+          JMH_ARTIFACTS=$(ls artifacts/ | grep "jmh" | wc -l)
+
+          echo "- ✅ Kotlin Multiplatform: $KOTLIN_ARTIFACTS targets tested" >> performance-report.md
+          echo "- 📱 Android Benchmarks: $ANDROID_ARTIFACTS test suites" >> performance-report.md
+          echo "- ⚡ JMH Deep Analysis: $JMH_ARTIFACTS detailed reports" >> performance-report.md
+          echo "" >> performance-report.md
+
+          echo "## 📊 Artifacts Generated" >> performance-report.md
+          echo "" >> performance-report.md
+          echo "All benchmark data has been collected and is available for analysis:" >> performance-report.md
+          echo "" >> performance-report.md
+
+          for artifact in artifacts/*/; do
+            if [ -d "$artifact" ]; then
+              artifact_name=$(basename "$artifact")
+              file_count=$(find "$artifact" -type f | wc -l)
+              echo "- \`$artifact_name\`: $file_count files" >> performance-report.md
+            fi
+          done
+
+          echo "" >> performance-report.md
+          echo "## 🎯 Next Steps" >> performance-report.md
+          echo "" >> performance-report.md
+          echo "1. Download artifacts from this workflow run" >> performance-report.md
+          echo "2. Analyze performance trends using benchmark data" >> performance-report.md
+          echo "3. Compare results with baseline performance" >> performance-report.md
+          echo "4. Address any performance regressions identified" >> performance-report.md
+
+      - name: 📝 Upload performance report
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-report
+          path: performance-report.md
+          retention-days: 90
+
+      - name: 💬 Comment PR with results (if PR)
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('performance-report.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+
+  # Оповещения при критической деградации производительности
+  performance-alerts:
+    needs: [kotlin-multiplatform-benchmarks, android-performance-tests, jmh-deep-analysis]
+    runs-on: ubuntu-latest
+    if: failure() && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: 🚨 Send performance alert
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = '🚨 Performance Regression Detected';
+            const body = `
+            ## Performance Alert
+
+            Critical performance regression detected in main branch.
+
+            **Details:**
+            - Commit: ${context.sha}
+            - Workflow: [${context.runNumber}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+            - Branch: ${context.ref}
+
+            **Action Required:**
+            1. Review the failing benchmark results
+            2. Identify the cause of performance degradation
+            3. Create a fix or rollback the changes
+
+            This issue was created automatically by the Performance CI pipeline.
+            `;
+
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['performance', 'regression', 'priority-high']
+            });

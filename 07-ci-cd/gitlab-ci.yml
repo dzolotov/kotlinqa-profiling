@@ -1,0 +1,397 @@
+# GitLab CI/CD конфигурация для Performance Testing
+# Файл: .gitlab-ci.yml
+
+stages:
+  - build
+  - test-performance
+  - report
+
+variables:
+  # Docker образы
+  KOTLIN_JVM_IMAGE: "openjdk:17-jdk"
+  ANDROID_IMAGE: "cimg/android:2024.01.1"
+
+  # Настройки производительности
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
+  GRADLE_USER_HOME: "$CI_PROJECT_DIR/.gradle"
+  ANDROID_COMPILE_SDK: "34"
+  ANDROID_BUILD_TOOLS: "34.0.0"
+  ANDROID_SDK_TOOLS: "9477386"
+
+  # Пороги производительности
+  PERFORMANCE_THRESHOLD: "120%"
+  CRITICAL_THRESHOLD: "200%"
+
+# Кеширование для ускорения сборки
+.cache_template: &cache_template
+  cache:
+    key:
+      files:
+        - gradle/wrapper/gradle-wrapper.properties
+    paths:
+      - .gradle/wrapper
+      - .gradle/caches
+
+# Базовый шаблон для Kotlin проектов
+.kotlin_base:
+  image: $KOTLIN_JVM_IMAGE
+  <<: *cache_template
+  before_script:
+    - chmod +x ./gradlew
+    - export GRADLE_USER_HOME="$CI_PROJECT_DIR/.gradle"
+
+# Сборка проекта
+build:
+  extends: .kotlin_base
+  stage: build
+  script:
+    - ./gradlew clean build -x test
+  artifacts:
+    paths:
+      - build/
+    expire_in: 1 hour
+    reports:
+      junit: build/test-results/test/TEST-*.xml
+
+# JVM бенчмарки
+jvm-benchmarks:
+  extends: .kotlin_base
+  stage: test-performance
+  dependencies:
+    - build
+  script:
+    - echo "🚀 Running JVM benchmarks..."
+    - ./gradlew jvmBenchmark --info
+
+    # Создаем отчет
+    - echo "📊 Processing JVM benchmark results..."
+    - mkdir -p reports/jvm
+
+    # Копируем результаты
+    - |
+      if [ -d "build/reports/benchmarks/main" ]; then
+        cp -r build/reports/benchmarks/main/* reports/jvm/
+        echo "✅ JVM benchmark results saved"
+      else
+        echo "❌ No JVM benchmark results found"
+        exit 1
+      fi
+
+  artifacts:
+    paths:
+      - reports/jvm/
+    expire_in: 7 days
+    reports:
+      junit: build/test-results/jvmBenchmark/TEST-*.xml
+
+  # Разрешаем failure для исследовательских бенчмарков
+  allow_failure: false
+
+# JS бенчмарки
+js-benchmarks:
+  extends: .kotlin_base
+  stage: test-performance
+  dependencies:
+    - build
+  script:
+    - echo "🌐 Running JavaScript benchmarks..."
+    - ./gradlew jsBenchmark --info
+
+    - echo "📊 Processing JS benchmark results..."
+    - mkdir -p reports/js
+
+    - |
+      if [ -d "build/reports/benchmarks/js" ]; then
+        cp -r build/reports/benchmarks/js/* reports/js/
+        echo "✅ JS benchmark results saved"
+      else
+        echo "❌ No JS benchmark results found"
+        exit 1
+      fi
+
+  artifacts:
+    paths:
+      - reports/js/
+    expire_in: 7 days
+
+  allow_failure: true  # JS бенчмарки могут быть нестабильными
+
+# Native бенчмарки (только на Linux)
+native-benchmarks:
+  extends: .kotlin_base
+  stage: test-performance
+  dependencies:
+    - build
+  tags:
+    - linux  # Только на Linux runners
+  script:
+    - echo "⚡ Running Kotlin/Native benchmarks..."
+    - ./gradlew nativeBenchmark --info
+
+    - echo "📊 Processing Native benchmark results..."
+    - mkdir -p reports/native
+
+    - |
+      if [ -d "build/reports/benchmarks/native" ]; then
+        cp -r build/reports/benchmarks/native/* reports/native/
+        echo "✅ Native benchmark results saved"
+      else
+        echo "❌ No Native benchmark results found"
+        exit 1
+      fi
+
+  artifacts:
+    paths:
+      - reports/native/
+    expire_in: 7 days
+
+  allow_failure: true
+
+# Android бенчмарки (требуют специального окружения)
+android-benchmarks:
+  image: $ANDROID_IMAGE
+  stage: test-performance
+  dependencies:
+    - build
+  variables:
+    ANDROID_HOME: "/opt/android/sdk"
+  before_script:
+    - chmod +x ./gradlew
+    - export PATH=$PATH:$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools
+
+  script:
+    - echo "📱 Running Android benchmarks..."
+
+    # Проверяем наличие эмулятора
+    - echo "Checking for available Android devices..."
+    - adb devices || echo "No ADB devices found - using instrumented tests"
+
+    # Сборка Android тестов
+    - ./gradlew assembleDebug assembleBenchmark
+    - ./gradlew assembleDebugAndroidTest assembleBenchmarkAndroidTest
+
+    # Запуск бенчмарков (если устройство доступно)
+    - |
+      if adb devices | grep -q "device$"; then
+        echo "📱 Device found - running connected tests"
+        ./gradlew benchmark:connectedAndroidTest \
+          -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.suppressErrors=EMULATOR,UNLOCKED,UNSUPPORTED_ACTIVITY_MANAGER_REQUEST \
+          --info
+
+        ./gradlew macrobenchmark:connectedAndroidTest \
+          -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.suppressErrors=EMULATOR,UNLOCKED,UNSUPPORTED_ACTIVITY_MANAGER_REQUEST \
+          --info
+      else
+        echo "📋 No device available - skipping instrumented tests"
+        echo "This is expected in most CI environments without emulator setup"
+      fi
+
+    # Собираем результаты
+    - mkdir -p reports/android
+    - |
+      # Копируем отчеты если они есть
+      if [ -d "benchmark/build/outputs/androidTest-results" ]; then
+        cp -r benchmark/build/outputs/androidTest-results reports/android/micro-benchmarks/
+      fi
+
+      if [ -d "macrobenchmark/build/outputs/androidTest-results" ]; then
+        cp -r macrobenchmark/build/outputs/androidTest-results reports/android/macro-benchmarks/
+      fi
+
+      # Создаем файл статуса
+      echo "Android benchmarks configuration validated" > reports/android/status.txt
+
+  artifacts:
+    paths:
+      - reports/android/
+      - benchmark/build/outputs/
+      - macrobenchmark/build/outputs/
+    expire_in: 7 days
+
+  allow_failure: true  # Android тесты могут не работать без эмулятора
+
+# JMH детальный анализ
+jmh-benchmarks:
+  extends: .kotlin_base
+  stage: test-performance
+  dependencies:
+    - build
+  script:
+    - echo "⚡ Running JMH deep performance analysis..."
+
+    # Компилируем JMH jar
+    - ./gradlew jmhJar
+
+    # Запускаем JMH с детальной конфигурацией
+    - |
+      java -jar build/libs/jmh.jar \
+        -wi 3 \
+        -i 5 \
+        -f 1 \
+        -r 1s \
+        -w 1s \
+        -rf json \
+        -rff reports/jmh-results.json \
+        -v EXTRA
+
+    # Создаем человекочитаемый отчет
+    - echo "📊 Generating JMH report..."
+    - mkdir -p reports/jmh
+    - mv reports/jmh-results.json reports/jmh/
+
+    # Простой парсер результатов
+    - |
+      python3 -c "
+      import json
+      import sys
+
+      try:
+          with open('reports/jmh/jmh-results.json', 'r') as f:
+              results = json.load(f)
+
+          with open('reports/jmh/summary.md', 'w') as f:
+              f.write('# JMH Benchmark Results\n\n')
+              f.write('| Benchmark | Score | Unit | Error |\n')
+              f.write('|-----------|-------|------|-------|\n')
+
+              for result in results:
+                  benchmark = result['benchmark'].split('.')[-1]
+                  score = result['primaryMetric']['score']
+                  unit = result['primaryMetric']['scoreUnit']
+                  error = result['primaryMetric']['scoreError']
+                  f.write(f'| {benchmark} | {score:.2f} | {unit} | ±{error:.2f} |\n')
+
+          print('✅ JMH report generated successfully')
+      except Exception as e:
+          print(f'❌ Error generating JMH report: {e}')
+          sys.exit(1)
+      "
+
+  artifacts:
+    paths:
+      - reports/jmh/
+      - build/libs/jmh.jar
+    expire_in: 7 days
+
+# Сводный отчет
+performance-report:
+  stage: report
+  image: alpine:latest
+  dependencies:
+    - jvm-benchmarks
+    - js-benchmarks
+    - native-benchmarks
+    - android-benchmarks
+    - jmh-benchmarks
+  before_script:
+    - apk add --no-cache python3 py3-pip
+
+  script:
+    - echo "📈 Generating comprehensive performance report..."
+
+    # Создаем сводный отчет
+    - |
+      cat > final-report.md << 'EOF'
+      # 🚀 Performance Test Report
+
+      **Pipeline**: [`$CI_PIPELINE_ID`]($CI_PIPELINE_URL)
+      **Commit**: [`$CI_COMMIT_SHA`]($CI_PROJECT_URL/-/commit/$CI_COMMIT_SHA)
+      **Branch**: `$CI_COMMIT_REF_NAME`
+      **Date**: $(date -u)
+
+      ## 📊 Test Summary
+
+      ### JVM Benchmarks
+      EOF
+
+    # Добавляем информацию о каждом типе тестов
+    - |
+      for platform in jvm js native android jmh; do
+        echo "### ${platform^} Results" >> final-report.md
+        if [ -d "reports/$platform" ]; then
+          file_count=$(find reports/$platform -type f | wc -l)
+          echo "✅ $file_count files generated" >> final-report.md
+        else
+          echo "❌ No results found" >> final-report.md
+        fi
+        echo "" >> final-report.md
+      done
+
+    # Добавляем инструкции
+    - |
+      cat >> final-report.md << 'EOF'
+
+      ## 📋 Available Artifacts
+
+      - **JVM Benchmarks**: Kotlin/JVM performance metrics
+      - **JS Benchmarks**: Kotlin/JS performance metrics
+      - **Native Benchmarks**: Kotlin/Native performance metrics
+      - **Android Benchmarks**: Android app performance tests
+      - **JMH Analysis**: Detailed microbenchmark analysis
+
+      ## 🎯 Next Steps
+
+      1. Download artifacts from this pipeline
+      2. Compare with baseline performance
+      3. Investigate any performance regressions
+      4. Update performance baselines if needed
+      EOF
+
+    - echo "✅ Performance report generated"
+    - cat final-report.md
+
+  artifacts:
+    paths:
+      - final-report.md
+      - reports/
+    expire_in: 30 days
+    reports:
+      # GitLab может отображать кастомные отчеты
+      performance: reports/*/performance.json
+
+  # Этот job всегда запускается для создания отчета
+  when: always
+
+# Настройка для автоматических MR комментариев
+pages:
+  stage: report
+  dependencies:
+    - performance-report
+  script:
+    - mkdir public
+    - cp -r reports/* public/ || echo "No reports to publish"
+    - cp final-report.md public/index.md || echo "No final report"
+
+    # Создаем простую HTML страницу
+    - |
+      cat > public/index.html << 'EOF'
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <title>Performance Report</title>
+          <meta charset="utf-8">
+      </head>
+      <body>
+          <h1>Performance Test Results</h1>
+          <p>See artifacts for detailed benchmark data.</p>
+          <ul>
+      EOF
+
+    - |
+      for dir in public/*/; do
+        if [ -d "$dir" ]; then
+          dirname=$(basename "$dir")
+          echo "<li><a href=\"$dirname/\">$dirname Results</a></li>" >> public/index.html
+        fi
+      done
+
+    - echo '</ul></body></html>' >> public/index.html
+
+  artifacts:
+    paths:
+      - public
+    expire_in: 30 days
+
+  only:
+    - main
+    - develop

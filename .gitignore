@@ -1,0 +1,63 @@
+# IDE файлы
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build директории
+build/
+out/
+target/
+*.class
+*.jar
+!gradle-wrapper.jar
+*.war
+
+# Gradle
+.gradle/
+gradle-app.setting
+.gradletasknamecache
+
+# Android
+*.apk
+*.ap_
+*.aab
+*.dex
+local.properties
+captures/
+.externalNativeBuild
+.cxx
+*/build/
+
+# Kotlin
+*.kotlin_module
+
+# Logs
+*.log
+logs/
+
+# OS файлы
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Временные файлы
+*.tmp
+*.bak
+*.backup
+*.old
+.cache/
+
+# JMH результаты
+jmh-result.json
+*.jmh
+jmh.jar
+
+# Python
+__pycache__/
+*.py[cod]

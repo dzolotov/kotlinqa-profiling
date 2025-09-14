@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Jetpack Benchmark Demo</string>
+    <string name="main_title">Jetpack Benchmark Demo</string>
+    <string name="main_description">This app demonstrates Jetpack Benchmark capabilities:</string>
+    <string name="feature_microbenchmarks">• Microbenchmarks for code performance</string>
+    <string name="feature_macrobenchmarks">• Macrobenchmarks for UI performance</string>
+    <string name="feature_startup">• Startup time measurements</string>
+    <string name="btn_list_demo">Open List Demo</string>
+    <string name="benchmark_commands">Run benchmarks using:\n./gradlew benchmark:connectedAndroidTest\n./gradlew macrobenchmark:connectedAndroidTest</string>
+</resources>

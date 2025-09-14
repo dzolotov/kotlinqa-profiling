@@ -1,0 +1,83 @@
+# Пример сгенерированного Baseline Profile
+# Этот файл содержит информацию о "горячих" методах и классах,
+# которые должны быть скомпилированы AOT для улучшения производительности
+
+# Основная активность приложения
+Lcom/example/myapp/MainActivity;
+Lcom/example/myapp/MainActivity;->onCreate(Landroid/os/Bundle;)V
+
+# ViewModel и бизнес-логика
+Lcom/example/myapp/viewmodel/MainViewModel;
+Lcom/example/myapp/viewmodel/MainViewModel;->loadData()V
+Lcom/example/myapp/viewmodel/MainViewModel;->processUserInput(Ljava/lang/String;)V
+
+# Адаптеры и ViewHolders
+Lcom/example/myapp/adapter/DataAdapter;
+Lcom/example/myapp/adapter/DataAdapter;->onBindViewHolder(Lcom/example/myapp/adapter/ViewHolder;I)V
+Lcom/example/myapp/adapter/ViewHolder;
+Lcom/example/myapp/adapter/ViewHolder;->bind(Lcom/example/myapp/model/DataItem;)V
+
+# Фрагменты
+Lcom/example/myapp/fragment/ListFragment;
+Lcom/example/myapp/fragment/ListFragment;->onViewCreated(Landroid/view/View;Landroid/os/Bundle;)V
+Lcom/example/myapp/fragment/DetailFragment;
+
+# Repository и Data Access
+Lcom/example/myapp/repository/DataRepository;
+Lcom/example/myapp/repository/DataRepository;->fetchData()Ljava/util/List;
+Lcom/example/myapp/repository/DataRepository;->cacheData(Ljava/util/List;)V
+
+# Утилиты и хелперы
+Lcom/example/myapp/utils/ImageLoader;
+Lcom/example/myapp/utils/ImageLoader;->loadImage(Ljava/lang/String;Landroid/widget/ImageView;)V
+Lcom/example/myapp/utils/DateFormatter;
+Lcom/example/myapp/utils/DateFormatter;->formatDate(J)Ljava/lang/String;
+
+# Dependency Injection
+Lcom/example/myapp/di/ApplicationComponent;
+Lcom/example/myapp/di/ViewModelModule;
+
+# Навигация
+Lcom/example/myapp/navigation/NavigationController;
+Lcom/example/myapp/navigation/NavigationController;->navigate(I)V
+
+# Модели данных
+Lcom/example/myapp/model/User;
+Lcom/example/myapp/model/DataItem;
+Lcom/example/myapp/model/ApiResponse;
+
+# Сетевые операции
+Lcom/example/myapp/network/ApiService;
+Lcom/example/myapp/network/ApiService;->getData()Lretrofit2/Call;
+Lcom/example/myapp/network/NetworkInterceptor;
+
+# База данных
+Lcom/example/myapp/database/AppDatabase;
+Lcom/example/myapp/database/dao/UserDao;
+Lcom/example/myapp/database/dao/UserDao;->getAllUsers()Ljava/util/List;
+
+# Custom Views
+Lcom/example/myapp/view/CustomButton;
+Lcom/example/myapp/view/CustomButton;->onDraw(Landroid/graphics/Canvas;)V
+Lcom/example/myapp/view/LoadingView;
+
+# Application класс
+Lcom/example/myapp/MyApplication;
+Lcom/example/myapp/MyApplication;->onCreate()V
+
+# Kotlin Coroutines (горячие пути)
+Lkotlinx/coroutines/CoroutineDispatcher;
+Lkotlinx/coroutines/internal/ThreadSafeHeap;
+
+# AndroidX Libraries (часто используемые)
+Landroidx/lifecycle/ViewModel;
+Landroidx/recyclerview/widget/RecyclerView$Adapter;
+Landroidx/navigation/fragment/NavHostFragment;
+
+# Примечания:
+# - H в начале строки означает "Hot" метод (вызывается часто)
+# - S означает "Startup" метод (критичен для запуска)
+# - P означает "Post startup" метод (важен после запуска)
+#
+# Baseline Profile генерируется автоматически на основе реального
+# использования приложения во время выполнения тестов
