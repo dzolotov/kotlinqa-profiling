@@ -58,6 +58,10 @@ jmh-result.json
 *.jmh
 jmh.jar
 
+# Perfetto traces
+*.perfetto-trace
+*.trace
+
 # Python
 __pycache__/
 *.py[cod]
