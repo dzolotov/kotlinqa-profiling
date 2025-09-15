@@ -7,20 +7,22 @@ import kotlin.system.measureNanoTime
  */
 object AdvancedTimingExamples {
 
+    @Volatile private var volatileResult = 0L // Для предотвращения оптимизации
+
     @JvmStatic
     fun main(args: Array<String>) {
         println("🎯 Продвинутые техники измерения времени")
         println("=" * 50)
 
-        demonstrateWarmupImportance()
-        println()
-        demonstrateGCInterference()
-        println()
-        demonstrateResolutionLimits()
-        println()
-        demonstrateStatisticalApproach()
-        println()
-        showRealWorldScenarios()
+       demonstrateWarmupImportance()
+       println()
+       demonstrateGCInterference()
+       println()
+       demonstrateResolutionLimits()
+       println()
+       demonstrateStatisticalApproach()
+       println()
+       showRealWorldScenarios()
     }
 
     /**
@@ -76,11 +78,12 @@ object AdvancedTimingExamples {
             val time = measureNanoTime {
                 // Операция, создающая много мусора
                 val bigList = mutableListOf<String>()
-                repeat(50_000) {
+                repeat(250_000) {
                     bigList.add("Строка номер $it с дополнительным текстом для создания объектов")
                     if (it % 10_000 == 0) {
                         // Создаем еще больше объектов
                         val tempList = bigList.map { s -> s.uppercase() }
+                        tempList.size
                     }
                 }
                 bigList.size
@@ -174,9 +177,11 @@ object AdvancedTimingExamples {
         val testOperation = {
             // Операция средней сложности с некоторой вариативностью
             val random = kotlin.random.Random
+            var sum = 0.0 // Аккумулятор для предотвращения dead code elimination
             repeat(random.nextInt(5000, 15000)) {
-                val dummy = Math.sqrt(it.toDouble()) + Math.sin(it * random.nextDouble())
+                sum += Math.sqrt(it.toDouble()) + Math.sin(it * random.nextDouble())
             }
+            sum // Возвращаем результат, чтобы JVM не удалила вычисления
         }
 
         println("Собираем статистику по 50 измерениям...")
@@ -266,9 +271,11 @@ object AdvancedTimingExamples {
         val time = measureNanoTime {
             // Простейший "парсинг"
             val userCount = jsonData.count { it == '{' } - 1 // -1 для основного объекта
+            var hashSum = 0L // Аккумулятор для предотвращения dead code elimination
             repeat(userCount * 1000) {
-                val dummy = jsonData.hashCode() + it
+                hashSum += jsonData.hashCode() + it
             }
+            volatileResult = hashSum // Сохраняем в volatile поле для предотвращения оптимизации
         }
 
         println("  Время 'парсинга JSON': ${String.format("%.3f", time/1_000_000.0)}мс")

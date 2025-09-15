@@ -6,10 +6,12 @@ import kotlin.system.measureNanoTime
  *
  * Показывает проблемы и правильные подходы к измерению производительности
  */
+
 object TimeMeasurementsDemo {
 
     @JvmStatic
     fun main(args: Array<String>) {
+
         println("🕒 Демонстрация измерения времени в Kotlin")
         println("=" * 50)
 
@@ -28,26 +30,34 @@ object TimeMeasurementsDemo {
 
     /**
      * Демонстрация measureTimeMillis
-     * Хорошо для измерения операций длительностью > 1мс
+     * ⚠️ ВАЖНО: measureTimeMillis использует System.currentTimeMillis() - НЕмонотонное время!
+     * Может давать неверные результаты при NTP синхронизации или изменении системного времени
+     * Хорошо для измерения операций длительностью > 1мс (но лучше использовать measureNanoTime)
      */
     private fun demonstrateMeasureTimeMillis() {
         println("📏 measureTimeMillis - для операций > 1мс")
+        println("⚠️ ВНИМАНИЕ: использует System.currentTimeMillis() - немонотонное время!")
         println("-".repeat(40))
 
         // Быстрая операция - плохой кейс для measureTimeMillis
         val fastOperationTime = measureTimeMillis {
+            var sum = 0L // Аккумулятор для предотвращения dead code elimination
             repeat(1000) {
-                val dummy = it * it + it
+                sum += it * it + it
             }
+            sum // Используем результат
         }
         println("⚠️ Быстрая операция: ${fastOperationTime}мс (может показать 0мс!)")
 
         // Медленная операция - хороший кейс
         val slowOperationTime = measureTimeMillis {
             Thread.sleep(50) // 50мс
+            var sum = 0.0
             repeat(100_000) {
                 val dummy = Math.sqrt(it.toDouble())
+                sum+=dummy
             }
+            println(sum)
         }
         println("✅ Медленная операция: ${slowOperationTime}мс")
 
@@ -55,9 +65,11 @@ object TimeMeasurementsDemo {
         println("\n🔄 10 измерений быстрой операции:")
         repeat(10) { run ->
             val time = measureTimeMillis {
+                var sum = 0L // Аккумулятор для предотвращения dead code elimination
                 repeat(1000) {
-                    val dummy = it * it * it
+                    sum += it * it * it
                 }
+                sum // Используем результат
             }
             print("$time ")
         }
@@ -75,9 +87,11 @@ object TimeMeasurementsDemo {
 
         // Быстрая операция - теперь видим результат
         val fastOperationNano = measureNanoTime {
+            var sum = 0L // Аккумулятор для предотвращения dead code elimination
             repeat(1000) {
-                val dummy = it * it + it
+                sum += it * it + it
             }
+            sum // Используем результат
         }
         println("✅ Быстрая операция: ${fastOperationNano}нс = ${fastOperationNano/1_000_000.0}мс")
 
@@ -87,15 +101,19 @@ object TimeMeasurementsDemo {
 
         repeat(5) { run ->
             val millis = measureTimeMillis {
+                var sum = 0L
                 repeat(500) {
-                    val dummy = it * it + it / 2
+                    sum += it * it + it / 2
                 }
+                sum
             }
 
             val nanos = measureNanoTime {
+                var sum = 0L
                 repeat(500) {
-                    val dummy = it * it + it / 2
+                    sum += it * it + it / 2
                 }
+                sum
             }
 
             println("Попытка ${run + 1}: ${millis}мс vs ${nanos}нс (${String.format("%.3f", nanos/1_000_000.0)}мс)")
@@ -138,9 +156,11 @@ object TimeMeasurementsDemo {
         val startTime = System.currentTimeMillis()
 
         // Некоторая работа
+        var sum = 0.0 // Аккумулятор для предотвращения dead code elimination
         repeat(10_000) {
-            val dummy = Math.sqrt(it.toDouble()) + Math.sin(it.toDouble())
+            sum += Math.sqrt(it.toDouble()) + Math.sin(it.toDouble())
         }
+        // sum используется неявно для предотвращения оптимизации
 
         val endTime = System.currentTimeMillis()
         return endTime - startTime
@@ -153,9 +173,11 @@ object TimeMeasurementsDemo {
         val startTime = System.nanoTime()
 
         // Та же работа
+        var sum = 0.0 // Аккумулятор для предотвращения dead code elimination
         repeat(10_000) {
-            val dummy = Math.sqrt(it.toDouble()) + Math.sin(it.toDouble())
+            sum += Math.sqrt(it.toDouble()) + Math.sin(it.toDouble())
         }
+        // sum используется неявно для предотвращения оптимизации
 
         val endTime = System.nanoTime()
         return endTime - startTime
@@ -198,7 +220,7 @@ object TimeMeasurementsDemo {
                 }
 
                 repeat(1000) { j ->
-                    val dummy = j * j + j
+                    @Volatile var volatileSum = j * j + j // @Volatile предотвращает оптимизацию
                 }
             }
             measurements.add(time)
@@ -216,8 +238,9 @@ object TimeMeasurementsDemo {
         println("✅ Правильные техники измерения")
         println("-".repeat(40))
 
-        println("1. 🎯 Используйте measureTimeMillis для операций > 1мс")
-        println("2. ⚡ Используйте measureNanoTime для быстрых операций")
+        println("1. ⚠️ measureTimeMillis использует НЕМОНОТОННОЕ время (System.currentTimeMillis)!")
+        println("   Может давать неверные результаты при NTP синхронизации")
+        println("2. ⚡ ПРЕДПОЧИТАЙТЕ measureNanoTime - использует монотонное время!")
         println("3. 🔄 Делайте множественные измерения и усредняйте")
         println("4. 🔥 Прогревайте JVM перед измерениями")
 
@@ -257,9 +280,12 @@ object TimeMeasurementsDemo {
      * Тестовая операция для измерений
      */
     private fun performTestOperation() {
+        var sum = 0.0 // Аккумулятор для предотвращения dead code elimination
         repeat(5000) {
-            val dummy = it * it + it / 2 + Math.sqrt(it.toDouble())
+            sum += it * it + it / 2 + Math.sqrt(it.toDouble())
         }
+        // Используем volatile чтобы гарантировать использование результата
+        @Volatile var result = sum
     }
 
     /**
@@ -271,9 +297,11 @@ object TimeMeasurementsDemo {
 
         println("Тестируем операцию средней сложности...")
         val testOperation = {
+            var sum = 0.0 // Аккумулятор для предотвращения dead code elimination
             repeat(50_000) {
-                val dummy = Math.sin(it.toDouble()) + Math.cos(it.toDouble())
+                sum += Math.sin(it.toDouble()) + Math.cos(it.toDouble())
             }
+            sum // Возвращаем результат
         }
 
         // 1. measureTimeMillis
@@ -294,8 +322,9 @@ object TimeMeasurementsDemo {
         println("  Ручное измерение:  ${String.format("%.3f", manualTime/1_000_000.0)}мс (${manualTime}нс)")
 
         println("\n🎯 Рекомендации:")
-        println("  • Для быстрых операций (<1мс): measureNanoTime")
-        println("  • Для медленных операций (>1мс): measureTimeMillis")
+        println("  • Для быстрых операций (<1мс): measureNanoTime (монотонное время)")
+        println("  • Для медленных операций (>1мс): measureNanoTime (НЕ measureTimeMillis!)")
+        println("  • ⚠️ measureTimeMillis использует немонотонное время - избегайте!")
         println("  • Для производственного кода: множественные измерения + статистика")
         println("  • Для бенчмарков: используйте JMH (Java Microbenchmark Harness)")
     }
