@@ -1,7 +1,7 @@
 plugins {
-    kotlin("jvm") version "2.0.20"
+    kotlin("jvm") version "2.2.20"
     id("me.champeau.jmh") version "0.7.2"
-    kotlin("plugin.allopen") version "2.0.20"
+    kotlin("plugin.allopen") version "2.2.20"
 }
 
 group = "com.example.jmh.problems"
@@ -74,9 +74,9 @@ jmh {
 tasks {
     // Настройка компиляции Kotlin
     compileKotlin {
-        kotlinOptions {
-            jvmTarget = "17"
-            freeCompilerArgs = listOf("-Xjsr305=strict")
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+            freeCompilerArgs.set(listOf("-Xjsr305=strict"))
         }
     }
 }

@@ -13,7 +13,7 @@ object TimeMeasurementsDemo {
     fun main(args: Array<String>) {
 
         println("🕒 Демонстрация измерения времени в Kotlin")
-        println("=" * 50)
+        println("=".repeat(50))
 
         demonstrateMeasureTimeMillis()
         println()
@@ -219,8 +219,9 @@ object TimeMeasurementsDemo {
                     // В реальности здесь System.currentTimeMillis() может дать отрицательный результат
                 }
 
+                var volatileSum = 0L
                 repeat(1000) { j ->
-                    @Volatile var volatileSum = j * j + j // @Volatile предотвращает оптимизацию
+                    volatileSum = (j * j + j).toLong() // Предотвращает оптимизацию
                 }
             }
             measurements.add(time)
@@ -284,8 +285,8 @@ object TimeMeasurementsDemo {
         repeat(5000) {
             sum += it * it + it / 2 + Math.sqrt(it.toDouble())
         }
-        // Используем volatile чтобы гарантировать использование результата
-        @Volatile var result = sum
+        // Используем результат чтобы предотвратить оптимизацию
+        if (sum < 0) println("Unexpected negative sum")
     }
 
     /**
@@ -305,10 +306,10 @@ object TimeMeasurementsDemo {
         }
 
         // 1. measureTimeMillis
-        val millisTime = measureTimeMillis(testOperation)
+        val millisTime = measureTimeMillis { testOperation() }
 
         // 2. measureNanoTime
-        val nanoTime = measureNanoTime(testOperation)
+        val nanoTime = measureNanoTime { testOperation() }
 
         // 3. Ручное измерение через System.nanoTime()
         val manualStart = System.nanoTime()

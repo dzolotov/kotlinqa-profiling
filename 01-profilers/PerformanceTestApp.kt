@@ -119,8 +119,6 @@ fun main() {
     println("=== Начинаем тестирование производительности ===")
     println("Подключите профайлер (VisualVM, async-profiler, JFR) к процессу ${ProcessHandle.current().pid()}")
     println("Нажмите Enter для продолжения...")
-    readLine()
-
     // Запускаем разные типы нагрузки для профилирования
     app.runCpuIntensiveTask()
     Thread.sleep(2000)

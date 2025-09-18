@@ -1,7 +1,7 @@
 plugins {
-    kotlin("multiplatform") version "2.0.20"
+    kotlin("multiplatform") version "2.2.20"
     id("org.jetbrains.kotlinx.benchmark") version "0.4.14"
-    kotlin("plugin.allopen") version "2.0.20"
+    kotlin("plugin.allopen") version "2.2.20"
 }
 
 repositories {
